@@ -4,9 +4,11 @@ set -o errexit
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Save the Python path so the start command can find installed packages
-PYTHON_PATH=$(which python || which python3)
-echo "Python at: $PYTHON_PATH"
-echo "$PYTHON_PATH" > /opt/render/project/.python_path
+# Debug: confirm gunicorn is installed and where
+echo "==> Python: $(which python || which python3)"
+echo "==> Gunicorn check:"
+python -m gunicorn --version || python3 -m gunicorn --version || echo "gunicorn NOT found"
+echo "==> pip show gunicorn:"
+pip show gunicorn || echo "gunicorn not in pip"
 
 python manage.py collectstatic --no-input
