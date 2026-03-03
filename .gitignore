@@ -1,0 +1,16 @@
+# Environment
+.env
+venv/
+*.pyc
+__pycache__/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Database
+*.sqlite3
+db.sqlite3
