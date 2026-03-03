@@ -41,23 +41,42 @@ def run_daily_pipeline(target_date: date) -> dict:
 
     Returns a summary dict with counts from each step.
     """
-    from global_market.services import calculate_market_bias_for_date
+    from global_market.services import (
+        fetch_global_market_data,
+        calculate_market_bias_for_date,
+    )
 
     logger.info("=== Starting daily pipeline for %s ===", target_date)
     results = {}
 
-    # Step 1: Ingest bhavcopy
-    results['bhavcopy_rows'] = fetch_and_store_bhavcopy(target_date)
+    # Step 1: Ingest bhavcopy (may resolve to an earlier trading day)
+    bhavcopy_rows, actual_date = fetch_and_store_bhavcopy(target_date)
+    results['bhavcopy_rows'] = bhavcopy_rows
+    results['actual_date'] = str(actual_date)
+
+    if actual_date != target_date:
+        logger.info(
+            "Bhavcopy not available for %s (holiday/weekend), "
+            "using %s instead. All subsequent steps use %s.",
+            target_date, actual_date, actual_date,
+        )
+
+    # Use actual trading date for all subsequent steps
+    trading_date = actual_date
 
     # Steps 2 & 3: OI change and volume spike (both depend on #1)
-    results['oi_change_updated'] = calculate_oi_change_for_date(target_date)
-    results['volume_spike_updated'] = calculate_volume_spike_for_date(target_date)
+    results['oi_change_updated'] = calculate_oi_change_for_date(trading_date)
+    results['volume_spike_updated'] = calculate_volume_spike_for_date(trading_date)
 
-    # Step 4: Market bias (independent of stock data)
-    results['market_bias'] = calculate_market_bias_for_date(target_date)
+    # Step 4: Fetch global market data (independent of stock data)
+    gm = fetch_global_market_data(trading_date)
+    results['global_market_fetched'] = gm is not None
 
-    # Step 5: Signal generation (depends on all above)
-    results['signals_generated'] = generate_signals_for_date(target_date)
+    # Step 5: Calculate market bias (depends on #4)
+    results['market_bias'] = calculate_market_bias_for_date(trading_date)
 
-    logger.info("=== Pipeline complete for %s: %s ===", target_date, results)
+    # Step 6: Signal generation (depends on #2, #3, #5)
+    results['signals_generated'] = generate_signals_for_date(trading_date)
+
+    logger.info("=== Pipeline complete for %s: %s ===", trading_date, results)
     return results

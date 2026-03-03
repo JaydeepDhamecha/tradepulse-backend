@@ -7,18 +7,21 @@ const typeBadge = {
   HOLD: "bg-yellow-500/15 text-yellow-400",
 };
 
-export default function SignalsTable() {
+export default function SignalsTable({ date }) {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    const params = filter ? { signal_type: filter } : {};
+    setLoading(true);
+    const params = {};
+    if (filter) params.signal_type = filter;
+    if (date) params.date = date;
     API.get("/api/stocks/intraday-signals/", { params })
       .then((r) => setSignals(r.data.results ?? r.data))
       .catch(() => setSignals([]))
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, [filter, date]);
 
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6">

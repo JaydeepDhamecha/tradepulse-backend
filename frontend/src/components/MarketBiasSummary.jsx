@@ -7,16 +7,18 @@ const biasConfig = {
   NEUTRAL: { color: "text-yellow-400", bg: "bg-yellow-500/10", icon: "\u25C6" },
 };
 
-export default function MarketBiasSummary() {
+export default function MarketBiasSummary({ date }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/global-market/latest/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/global-market/latest/", { params })
       .then((r) => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   if (loading) {
     return (

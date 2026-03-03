@@ -8,6 +8,19 @@ class GlobalMarket(models.Model):
         NEUTRAL = 'NEUTRAL', 'Neutral'
 
     date = models.DateField(unique=True, db_index=True)
+
+    # Last traded price (closing price)
+    gift_nifty_ltp = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    dow_jones_ltp = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    nasdaq_ltp = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+
+    # Daily % change
     gift_nifty_change = models.DecimalField(
         max_digits=8, decimal_places=4, null=True, blank=True,
     )
@@ -23,6 +36,7 @@ class GlobalMarket(models.Model):
         default=MarketBias.NEUTRAL,
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'global_market'

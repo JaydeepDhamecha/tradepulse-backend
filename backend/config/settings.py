@@ -182,12 +182,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # TRADEPULSE SERVICE CONFIG
 # ──────────────────────────────────────────────
 
-# NSE bhavcopy URL template  (date filled at runtime)
+# NSE bhavcopy URL template  (date filled at runtime as YYYYMMDD)
 NSE_BHAVCOPY_URL = (
-    'https://archives.nseindia.com/content/historical/EQUITIES/'
-    '{year}/{month}/cm{date}bhav.csv.zip'
+    'https://nsearchives.nseindia.com/content/cm/'
+    'BhavCopy_NSE_CM_0_0_0_{yyyymmdd}_F_0000.csv.zip'
 )
 NSE_BASE_URL = 'https://www.nseindia.com'
+NSE_DELIVERY_URL = (
+    'https://nsearchives.nseindia.com/products/content/'
+    'sec_bhavdata_full_{ddmmyyyy}.csv'
+)
 
 # Volume spike
 VOLUME_SPIKE_LOOKBACK_DAYS = 20
@@ -220,6 +224,9 @@ SIGNAL_FACTOR_RANGES = {
     'delivery_pct': (0.0, 100.0),       # already 0-100
 }
 
+# Claude API  (for AI insight generation)
+CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY', '')
+
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
@@ -245,6 +252,11 @@ LOGGING = {
             'propagate': False,
         },
         'global_market.services': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'insights.services': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

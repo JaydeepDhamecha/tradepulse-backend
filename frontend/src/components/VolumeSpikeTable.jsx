@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import API from "../api/axios";
 
-export default function VolumeSpikeTable() {
+export default function VolumeSpikeTable({ date }) {
   const [stocks, setStocks] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/stocks/volume-spike/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/stocks/volume-spike/", { params })
       .then((r) => setStocks((r.data.results ?? r.data).slice(0, 15)))
       .catch(() => setStocks([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6">

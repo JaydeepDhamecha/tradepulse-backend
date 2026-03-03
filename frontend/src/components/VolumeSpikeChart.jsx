@@ -4,12 +4,14 @@ import {
 } from "recharts";
 import API from "../api/axios";
 
-export default function VolumeSpikeChart() {
+export default function VolumeSpikeChart({ date }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/stocks/volume-spike/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/stocks/volume-spike/", { params })
       .then((r) => {
         const rows = (r.data.results ?? r.data).slice(0, 10).map((s) => ({
           symbol: s.symbol,
@@ -19,7 +21,7 @@ export default function VolumeSpikeChart() {
       })
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6">

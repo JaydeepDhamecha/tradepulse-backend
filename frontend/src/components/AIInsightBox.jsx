@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import API from "../api/axios";
 
-export default function AIInsightBox() {
+export default function AIInsightBox({ date }) {
   const [insight, setInsight] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/insights/daily/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/insights/daily/", { params })
       .then((r) => setInsight(r.data))
       .catch(() => setInsight(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   if (loading) {
     return (

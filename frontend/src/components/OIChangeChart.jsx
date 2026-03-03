@@ -4,12 +4,14 @@ import {
 } from "recharts";
 import API from "../api/axios";
 
-export default function OIChangeChart() {
+export default function OIChangeChart({ date }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/stocks/top-delivery/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/stocks/top-delivery/", { params })
       .then((r) => {
         const rows = (r.data.results ?? r.data)
           .filter((s) => s.oi_change != null)
@@ -23,7 +25,7 @@ export default function OIChangeChart() {
       })
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6">

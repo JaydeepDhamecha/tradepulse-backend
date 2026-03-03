@@ -8,6 +8,7 @@ class GlobalMarketSerializer(serializers.ModelSerializer):
         model = GlobalMarket
         fields = (
             'id', 'date',
+            'gift_nifty_ltp', 'dow_jones_ltp', 'nasdaq_ltp',
             'gift_nifty_change', 'dow_jones_change', 'nasdaq_change',
             'market_bias',
         )

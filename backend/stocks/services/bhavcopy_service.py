@@ -1,11 +1,15 @@
 """
 Fetch NSE bhavcopy CSV for a given date, parse it, and bulk-upsert Stock rows.
+
+URL format:
+  https://nsearchives.nseindia.com/content/cm/
+  BhavCopy_NSE_CM_0_0_0_YYYYMMDD_F_0000.csv.zip
 """
 
 import io
 import logging
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
@@ -29,24 +33,21 @@ _NSE_HEADERS = {
     'Referer': 'https://www.nseindia.com/',
 }
 
-# Column mapping: bhavcopy CSV column → Stock model field
-_COL_MAP = {
-    'SYMBOL': 'symbol',
-    'OPEN': 'open',
-    'HIGH': 'high',
-    'LOW': 'low',
-    'CLOSE': 'close',
-    'TOTTRDQTY': 'volume',
-    'DELIV_PER': 'delivery_percentage',
-}
+# Actual columns in the new NSE bhavcopy CSV:
+# TradDt, BizDt, Sgmt, Src, FinInstrmTp, FinInstrmId, ISIN, TckrSymb,
+# SctySrs, OpnPric, HghPric, LwPric, ClsPric, LastPric, PrvsClsgPric,
+# OpnIntrst, ChngInOpnIntrst, TtlTradgVol, TtlTrfVal, TtlNbOfTxsExctd, ...
+#
+# NOTE: DlvryPct is NOT in this CSV. Delivery data comes from a separate report.
+
+# Series filter column
+_SERIES_COL = 'SctySrs'
 
 
 def _build_url(target_date: date) -> str:
     """Return the bhavcopy ZIP URL for *target_date*."""
     return settings.NSE_BHAVCOPY_URL.format(
-        year=target_date.strftime('%Y'),
-        month=target_date.strftime('%b').upper(),
-        date=target_date.strftime('%d%b%Y').upper(),
+        yyyymmdd=target_date.strftime('%Y%m%d'),
     )
 
 
@@ -94,29 +95,143 @@ def _safe_int(value, default=None) -> int | None:
         return default
 
 
-def fetch_and_store_bhavcopy(target_date: date) -> int:
+_MAX_LOOKBACK_DAYS = 7  # Max days to walk back when bhavcopy not found
+
+# Nifty 200 constituent list URL
+_NIFTY200_URL = 'https://nsearchives.nseindia.com/content/indices/ind_nifty200list.csv'
+
+
+def _fetch_nifty200_symbols(session: requests.Session) -> set[str]:
+    """
+    Download the current Nifty 200 constituent list from NSE.
+    Returns a set of symbols. Falls back to empty set on failure.
+    """
+    logger.info("Fetching Nifty 200 constituent list...")
+    try:
+        resp = session.get(_NIFTY200_URL, timeout=15)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        df.columns = df.columns.str.strip()
+        symbols = set(df['Symbol'].str.strip())
+        logger.info("Fetched %d Nifty 200 symbols", len(symbols))
+        return symbols
+    except Exception as exc:
+        logger.warning("Failed to fetch Nifty 200 list: %s", exc)
+        return set()
+
+
+def _fetch_delivery_data(session: requests.Session, target_date: date) -> dict[str, Decimal]:
+    """
+    Fetch the sec_bhavdata_full CSV for *target_date* and return
+    a dict of {symbol: delivery_percentage}.
+
+    Returns empty dict on failure (non-critical).
+    """
+    url = settings.NSE_DELIVERY_URL.format(ddmmyyyy=target_date.strftime('%d%m%Y'))
+    logger.info("Fetching delivery data from %s", url)
+    try:
+        resp = session.get(url, timeout=30)
+        if resp.status_code != 200:
+            logger.warning("Delivery data not available (HTTP %d)", resp.status_code)
+            return {}
+
+        df = pd.read_csv(io.StringIO(resp.text))
+        df.columns = df.columns.str.strip()
+
+        # Filter equity series
+        if 'SERIES' in df.columns:
+            df = df[df['SERIES'].str.strip() == 'EQ']
+
+        result = {}
+        for _, row in df.iterrows():
+            symbol = str(row.get('SYMBOL', '')).strip()
+            deliv_pct = _safe_decimal(row.get('DELIV_PER'))
+            if symbol and deliv_pct is not None:
+                result[symbol] = deliv_pct
+
+        logger.info("Fetched delivery data for %d symbols", len(result))
+        return result
+    except Exception as exc:
+        logger.warning("Failed to fetch delivery data: %s", exc)
+        return {}
+
+
+def _find_available_date(session: requests.Session, target_date: date) -> tuple[date, pd.DataFrame]:
+    """
+    Try *target_date* first; on 404 walk back up to _MAX_LOOKBACK_DAYS
+    (skipping weekends) to find the most recent available bhavcopy.
+
+    Returns (actual_date, dataframe).
+    Raises requests.HTTPError if nothing is found within the window.
+    """
+    attempt = target_date
+    for _ in range(_MAX_LOOKBACK_DAYS):
+        url = _build_url(attempt)
+        logger.info("Trying bhavcopy for %s → %s", attempt, url)
+        resp = session.get(url, timeout=30)
+
+        if resp.status_code == 200:
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                csv_name = zf.namelist()[0]
+                with zf.open(csv_name) as csv_file:
+                    df = pd.read_csv(csv_file)
+            df.columns = df.columns.str.strip()
+            if attempt != target_date:
+                logger.info("Bhavcopy not available for %s, using %s instead",
+                            target_date, attempt)
+            return attempt, df
+
+        if resp.status_code == 404:
+            # Walk back one day, skip weekends
+            attempt -= timedelta(days=1)
+            while attempt.weekday() >= 5:  # 5=Sat, 6=Sun
+                attempt -= timedelta(days=1)
+            continue
+
+        # Any other HTTP error — raise immediately
+        resp.raise_for_status()
+
+    raise requests.HTTPError(
+        f"No bhavcopy found for {target_date} or the previous "
+        f"{_MAX_LOOKBACK_DAYS} trading days."
+    )
+
+
+def fetch_and_store_bhavcopy(target_date: date) -> tuple[int, date]:
     """
     Download the NSE bhavcopy for *target_date*, filter equity rows,
     and bulk-upsert into the Stock table.
 
-    Returns the number of rows upserted.
-    """
-    url = _build_url(target_date)
-    logger.info("Fetching bhavcopy from %s", url)
+    If the bhavcopy for *target_date* is not yet available (404),
+    walks back up to 7 trading days to find the most recent one.
 
+    Returns (rows_upserted, actual_date) — the actual trading date
+    may differ from *target_date* on holidays/weekends.
+    """
     session = _get_session()
-    df = _download_csv(session, url)
+    actual_date, df = _find_available_date(session, target_date)
+    target_date = actual_date
+
+    # Fetch Nifty 200 symbols and delivery data (reuse session)
+    nifty200 = _fetch_nifty200_symbols(session)
+    delivery_map = _fetch_delivery_data(session, target_date)
 
     # Keep only equity series
-    if 'SERIES' in df.columns:
-        df = df[df['SERIES'].str.strip() == 'EQ']
+    if _SERIES_COL in df.columns:
+        df = df[df[_SERIES_COL].str.strip() == 'EQ']
 
     logger.info("Parsed %d EQ rows for %s", len(df), target_date)
 
-    # Compute price_change_percent from CLOSE & PREVCLOSE if available
-    if {'CLOSE', 'PREVCLOSE'}.issubset(df.columns):
+    # ── Filter: only Nifty 200 stocks ────────────────────────
+    before = len(df)
+    if nifty200 and 'TckrSymb' in df.columns:
+        df = df[df['TckrSymb'].str.strip().isin(nifty200)]
+    logger.info("Filtered %d → %d stocks (Nifty 200 only)", before, len(df))
+
+    # Compute price_change_percent from ClsPric & PrvsClsgPric
+    if {'ClsPric', 'PrvsClsgPric'}.issubset(df.columns):
         df['_price_change_pct'] = (
-            (df['CLOSE'] - df['PREVCLOSE']) / df['PREVCLOSE'] * 100
+            (df['ClsPric'] - df['PrvsClsgPric']) / df['PrvsClsgPric'] * 100
         )
     else:
         df['_price_change_pct'] = None
@@ -130,20 +245,22 @@ def fetch_and_store_bhavcopy(target_date: date) -> int:
     to_update = []
 
     for _, row in df.iterrows():
-        symbol = str(row.get('SYMBOL', '')).strip()
+        symbol = str(row.get('TckrSymb', '')).strip()
         if not symbol:
             continue
 
         fields = {
             'symbol': symbol,
             'date': target_date,
-            'open': _safe_decimal(row.get('OPEN'), Decimal('0')),
-            'high': _safe_decimal(row.get('HIGH'), Decimal('0')),
-            'low': _safe_decimal(row.get('LOW'), Decimal('0')),
-            'close': _safe_decimal(row.get('CLOSE'), Decimal('0')),
-            'volume': _safe_int(row.get('TOTTRDQTY'), 0),
-            'delivery_percentage': _safe_decimal(row.get('DELIV_PER')),
+            'open': _safe_decimal(row.get('OpnPric'), Decimal('0')),
+            'high': _safe_decimal(row.get('HghPric'), Decimal('0')),
+            'low': _safe_decimal(row.get('LwPric'), Decimal('0')),
+            'close': _safe_decimal(row.get('ClsPric'), Decimal('0')),
+            'volume': _safe_int(row.get('TtlTradgVol'), 0),
+            'open_interest': _safe_int(row.get('OpnIntrst')),
+            'oi_change': _safe_int(row.get('ChngInOpnIntrst')),
             'price_change_percent': _safe_decimal(row.get('_price_change_pct')),
+            'delivery_percentage': delivery_map.get(symbol),
         }
 
         if symbol in existing:
@@ -164,4 +281,4 @@ def fetch_and_store_bhavcopy(target_date: date) -> int:
     total = len(to_create) + len(to_update)
     logger.info("Upserted %d stocks for %s (created=%d, updated=%d)",
                 total, target_date, len(to_create), len(to_update))
-    return total
+    return total, target_date

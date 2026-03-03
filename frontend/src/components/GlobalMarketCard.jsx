@@ -2,21 +2,29 @@ import { useEffect, useState } from "react";
 import API from "../api/axios";
 
 const indicators = [
-  { key: "gift_nifty_change", label: "GIFT Nifty" },
-  { key: "dow_jones_change", label: "Dow Jones" },
-  { key: "nasdaq_change", label: "Nasdaq" },
+  { key: "gift_nifty", label: "GIFT Nifty" },
+  { key: "dow_jones", label: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq" },
 ];
 
-export default function GlobalMarketCard() {
+function formatLTP(val) {
+  if (val == null) return "--";
+  const num = parseFloat(val);
+  return num.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export default function GlobalMarketCard({ date }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    API.get("/api/global-market/latest/")
+    setLoading(true);
+    const params = date ? { date } : {};
+    API.get("/api/global-market/latest/", { params })
       .then((r) => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [date]);
 
   if (loading) return <CardSkeleton />;
   if (!data) return <EmptyCard />;
@@ -30,19 +38,25 @@ export default function GlobalMarketCard() {
 
       <div className="grid grid-cols-3 gap-4">
         {indicators.map(({ key, label }) => {
-          const val = data[key] != null ? parseFloat(data[key]) : null;
+          const ltp = data[`${key}_ltp`];
+          const change = data[`${key}_change`] != null ? parseFloat(data[`${key}_change`]) : null;
+          const isPositive = change != null && change >= 0;
+
           return (
             <div key={key} className="text-center">
               <p className="text-xs text-gray-400">{label}</p>
-              {val != null ? (
+              <p className="mt-1 text-lg font-bold text-white">
+                {formatLTP(ltp)}
+              </p>
+              {change != null ? (
                 <p
-                  className={`mt-1 text-xl font-bold ${val >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                  className={`text-sm font-semibold ${isPositive ? "text-emerald-400" : "text-red-400"}`}
                 >
-                  {val >= 0 ? "+" : ""}
-                  {val.toFixed(2)}%
+                  {isPositive ? "+" : ""}
+                  {change.toFixed(2)}%
                 </p>
               ) : (
-                <p className="mt-1 text-xl font-bold text-gray-600">--</p>
+                <p className="text-sm font-semibold text-gray-600">--</p>
               )}
             </div>
           );
@@ -61,6 +75,7 @@ function CardSkeleton() {
           <div key={i} className="flex flex-col items-center gap-2">
             <div className="h-3 w-16 rounded bg-gray-800" />
             <div className="h-6 w-20 rounded bg-gray-800" />
+            <div className="h-4 w-14 rounded bg-gray-800" />
           </div>
         ))}
       </div>
